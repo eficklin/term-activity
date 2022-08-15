@@ -48,6 +48,16 @@ class TermActivity {
      */
     protected $supported_taxonomies = [ 'category' ];
 
+    /**
+	 * Time periods for the activity snapshot.
+	 *
+	 * @var int[]
+	 */
+	protected const PERIODS = [ 3, 30, 90 ];
+
+    /**
+     * Initialization logic.
+     */
     public function init() {
         // Post published/unpublished.
         add_action( 'wp_after_insert_post', [ $this, 'maybe_recalculate_publish' ], 10, 4 );
@@ -147,6 +157,89 @@ class TermActivity {
 		}
 	}
 
+    /**
+	 * Generates the activity snapshot.
+	 *
+	 * @param \WP_Term $term       The term for which to calculate activity.
+	 * @param string   $post_type  Post type for the calculation.
+	 * @return array The activity snapshot.
+	 */
+	protected function calculate_snapshot( \WP_Term $term, string $post_type ) : array {
+		$snapshot = [
+			'generated_at' => time(),
+			'periods'      => [],
+		];
+
+		// Reverse sort and get the longest period. Grab the full set of results.
+		$snapshot_periods = [];
+		$periods          = self::PERIODS;
+		rsort( $periods );
+		$period = array_shift( $periods );
+
+		$args = [
+			'post_type'              => $post_type,
+			'post_status'            => 'publish',
+			'tax_query'              => [
+				[
+					'taxonomy'         => $term->taxonomy,
+					'field'            => 'term_id',
+					'terms'            => $term->term_id,
+					'include_children' => false,
+				],
+			],
+			'posts_per_page'         => -1,
+			'update_post_term_cache' => false,
+			'update_post_meta_cache' => false,
+			'no_found_rows'          => true,
+            'date_query'             => [
+                [ 'after' => "-{$period} day" ],
+            ],
+		];
+		$query = new \WP_Query( $args );
+
+		$snapshot_periods[] = [
+			'days_prior' => $period,
+			'count'      => count( $query->posts ),
+		];
+
+		// Find the subsets, if any, for remaining periods.
+		$tz = wp_timezone();
+		foreach ( $periods as $period ) {
+			if ( ! $query->post_count ) {
+				$snapshot_periods[] = [
+					'days_prior' => $period,
+					'count'      => 0,
+				];
+				continue;
+			}
+
+			$cutoff = new \DateTimeImmutable( "-{$period} day", $tz );
+			$posts  = array_filter(
+				$query->posts,
+				function( $post ) use ( $cutoff, $tz ) {
+					$post_date = new \DateTimeImmutable( $post->post_date, $tz );
+					return $post_date > $cutoff;
+				}
+			);
+
+			$snapshot_periods[] = [
+				'days_prior' => $period,
+				'count'      => count( $posts ),
+			];
+		}
+
+		// Put periods back into ascending order.
+		usort(
+			$snapshot_periods,
+			function( $a, $b ) {
+				return ( $a['days_prior'] < $b['days_prior'] ) ? -1 : 1;
+			}
+		);
+
+		$snapshot['periods'] = $snapshot_periods;
+		return $snapshot;
+	}
+
     public function do_update() {
         $verify = $_REQUEST['request_token'] === $this->request_token;
         if ( ! $verify ) {
@@ -159,6 +252,9 @@ class TermActivity {
 
         foreach( $_REQUEST['updates'] as $pair ) {
             error_log( print_r( $pair, true ), 3, LOG);
+            // grab term object from id
+            // calculate snapshot
+            // write to term meta
         }
     }
 
