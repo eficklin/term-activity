@@ -251,10 +251,15 @@ class TermActivity {
 		}
 
         foreach( $_REQUEST['updates'] as $pair ) {
-            error_log( print_r( $pair, true ), 3, LOG);
-            // grab term object from id
-            // calculate snapshot
-            // write to term meta
+            $term = get_term( (int) $pair['term_id'] );
+            if ( $term && ! is_wp_error( $term ) ) {
+				$snapshot = $this->calculate_snapshot( $term, 'post' );
+				update_term_meta( 
+					$pair['term_id'], 
+					$this->meta_key_prefix . $pair['post_type'], 
+					$snapshot
+				);
+			}
         }
     }
 
